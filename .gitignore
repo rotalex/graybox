@@ -1,0 +1,4 @@
+build/*
+dist/*
+graybox.egg-info/*
+pkg_main.py
