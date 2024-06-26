@@ -2,12 +2,10 @@
 
 import enum
 from collections import defaultdict
-from dataclasses import dataclass, field
 from typing import Set, List
-import numpy as np
 import torch as th
 
-from neuron_ops import NeuronWiseOperations
+from .neuron_ops import NeuronWiseOperations
 
 
 class TrackingMode(str, enum.Enum):

@@ -12,10 +12,6 @@ setup(
     packages=[
         'graybox'
     ],
-    install_requires=[
-        'mpi4py>=2.0',
-        'numpy',
-    ],
     classifiers=[
         'Development Status :: 1 - Planning',
         'Intended Audience :: Science/Research',

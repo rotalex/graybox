@@ -146,7 +146,7 @@ class TriggersTrackerTest(unittest.TestCase):
 
 class TriggersTrackerClazzAndSampleIDTest(unittest.TestCase):
     """ Tests the TriggersTrackerClazzAndSampleID for the neuron operations and
-        persistency. 
+        persistency.
     """
     def setUp(self):
         self.batch_size = 2
