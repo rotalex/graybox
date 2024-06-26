@@ -1,4 +1,5 @@
 build/*
 dist/*
 graybox.egg-info/*
+graybox/__pycache__/*
 pkg_main.py
