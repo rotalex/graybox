@@ -21,7 +21,20 @@ def add_tracked_attrs_to_input_tensor(
         in_id_batch: th.Tensor | None,
         label_batch: th.Tensor | None):
 
-    """ Helper function that attaches to the input tensors useful infos. """
+    """
+    Helper function that attaches to the input tensors useful infos. This
+    is a hacky way to enable statistics computation during training.
+
+    Args:
+    -----------
+    indata: th.Tensor
+        The input tensor that will be augmented.
+    in_id_batch: th.Tensor
+        A tensor containing a batch of sample ids that will be attached to
+        indata.
+    label_batch: th.Tensor
+        A tensor containing the labels ids of the samples in the batch.
+    """
 
     if indata is not None:
         setattr(indata, 'batch_size', indata.shape[0])
@@ -42,16 +55,37 @@ def add_tracked_attrs_to_input_tensor(
 class Tracker(NeuronWiseOperations, th.nn.Module):
     """ Tracker interface for neuron level statistics. """
     def update(self, tensor: th.Tensor):
-        pass
+        """
+        Update the tracked statistics after each batch.
+
+        Args:
+            tensor (th.Tensor):
+                the input tensor that has been passed through the layer.
+        """
+        raise NotImplementedError
 
     def forward(self, tensor):
+        """
+        Forward pass of the tracker.
+
+        Args:
+            tensor (th.Tensor):
+                the input tensor that has been passed through the layer.
+        """
         return self.update(tensor)
 
 
 class TriggersTracker(Tracker):
     """
-        Computes how often does neurons trigger on average during a given
-        time frame.
+    Computes how often does neurons trigger on average during a given
+    time frame. Keeps track of how many times a neuron triggered (a.k.a 
+    its value was over 0) and how many samples tha neuron has seen.
+
+    Args:
+        number_of_neurons (int): The number of neurons in the tracker.
+        device (torch.device, optional): The device on which to perform
+            computations.
+            Defaults to None.
     """
     def __init__(self, number_of_neurons: int, device: th.device = None):
         super().__init__()
@@ -62,9 +96,9 @@ class TriggersTracker(Tracker):
 
     def reset_stats(self):
         """
-            Reset statistics for all neurons. Statistics are just an
-            aproximation, so they may shift in time, hence after a significant
-            amount of time they should not be representative anymore.
+        Reset statistics for all neurons. Statistics are just an
+        approximation, so they may shift in time, hence after a significant
+        amount of time they should not be representative anymore.
         """
         self.triggrs_by_neuron = th.zeros(self.number_of_neurons).long().to(
             self.device)
@@ -107,6 +141,12 @@ class TriggersTracker(Tracker):
             missing_keys, unexpected_keys, error_msgs)
 
     def to(self, device: th.device = None):
+        """
+        Moves the component fields and states to the given device.
+
+        Args:
+            device (th.device, optional): Defaults to None.
+        """
         self.device = device
         if self.device is not None:
             self.triggrs_by_neuron = self.triggrs_by_neuron.to(self.device)
@@ -114,7 +154,11 @@ class TriggersTracker(Tracker):
 
     def update(self, tensor: th.Tensor):
         """
-            Each batch of data is passed statistics are computed.
+        Each batch of data is passed statistics are computed.
+
+        Args:
+            tensor (th.Tensor): the tensor that has been passed through the
+                layer.
         """
 
         # Assumes that triggers per neuron have been pre-processed already.
@@ -231,11 +275,24 @@ class TriggersTracker(Tracker):
 
 class TriggersTrackerClazzAndSampleID(TriggersTracker):
     """
-        Computes how often does neurons trigger on average during a given
-        time frame. It also keeps track of the input id and the class id
-        of the input that triggered the neuron.
-    """
+    Computes how often does neurons trigger on average during a given
+    time frame. It also keeps track of the input id and the class id
+    of the input that triggered the neuron.
 
+    Args:
+        neuron_count (int): The number of neurons in the tracker.
+        device (torch.device, optional): The device on which the tracker is
+            located. Defaults to None.
+
+    Attributes:
+        triggers_by_in_id (List[Set[int]]):
+            A list of sets, where each set contains the input ids that
+            triggered the corresponding neuron.
+        triggers_by_class (List[defaultdict[int]]):
+            A list of dictionaries, where each dictionary contains the class
+            ids and their corresponding occurrence count for the corresponding
+            neuron.
+    """
     def __init__(self, neuron_count: int, device=None):
         super().__init__(neuron_count, device)
         self.triggers_by_in_id = [set() for _ in range(neuron_count)]
@@ -376,12 +433,26 @@ class TriggersTrackerClazzAndSampleID(TriggersTracker):
         )
 
     def get_neuron_triggers_by_input_id(self, neuron_id: int):
-        """" Returns the list of samples id for which the neuron triggered. """
+        """
+        Returns the list of samples id for which the neuron triggered.
+
+        Args:
+            neuron_id (int): The id of the neuron for which to get the
+                triggers.
+        """
         return list(self.triggers_by_in_id[neuron_id])
 
     def get_neuron_triggers_by_label(
             self, neuron_id: int, order_by_occurences: bool = False):
-        """ Return the histogram broken down by labels of neuron triggers. """
+        """
+        Return the histogram broken down by labels of neuron triggers.
+
+        Args:
+            neuron_id (int): The id of the neuron for which to get the
+                triggers.
+            order_by_occurences (bool, optional): Whether to order the
+                histogram by occurences or not. Defaults to False.
+        """
         if not order_by_occurences:
             return self.triggers_by_class[neuron_id]
         return sorted(
@@ -390,7 +461,15 @@ class TriggersTrackerClazzAndSampleID(TriggersTracker):
             reverse=True)
 
     def get_neuron_stats(self, neuron_id: int, cutoff: int = 10):
-        """ Return a structured version of the neuron stats. """
+        """
+        Return a structured version of the neuron stats.
+
+        Args:
+            neuron_id (int): The id of the neuron for which to get the
+                stats.
+            cutoff (int, optional): The number of items to return for the
+                input ids and labels. Defaults to 10.
+        """
         try:
             count = self.get_neuron_age(neuron_id)
             trggr = self.get_neuron_triggers(neuron_id)
@@ -402,7 +481,15 @@ class TriggersTrackerClazzAndSampleID(TriggersTracker):
             print("TrackerClazzAndSampleID.get_neuron_stats error ", e)
 
     def get_neuron_pretty_repr(self, neuron_id: int, prefix: str = '') -> str:
-        """ Get a pretty representation of the neuron statistics. """
+        """
+        Get a pretty representation of the neuron statistics.
+
+        Args:
+            neuron_id (int): The id of the neuron for which to get the
+                stats.
+            prefix (str, optional): The prefix to use for the representation.
+                Defaults to ''.
+        """
         prefix = prefix[:5]
         frq, ids, lbl = self.get_neuron_stats(neuron_id)
         cnt = self.get_neuron_triggers(neuron_id)
