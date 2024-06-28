@@ -52,6 +52,29 @@ def add_tracked_attrs_to_input_tensor(
     setattr(indata, "in_id_batch", in_id_batch)
 
 
+def copy_forward_tracked_attrs(
+        indata: th.Tensor, indata_w_attrs: th.Tensor):
+    """
+    Helper function that attaches to the indata tensors useful infos such as
+    label batch and sample ids batch from the indata_w_attrs.
+
+    Args:
+    -----------
+    indata: th.Tensor
+        The input tensor that will be augmented.
+    indata_w_attrs: th.Tensor
+        A tensor containing the tracked attributes to be copied over.
+    """
+    if hasattr(indata, "batch_size"):
+        setattr(indata, 'batch_size', indata_w_attrs.batch_size)
+
+    if hasattr(indata_w_attrs, 'in_id_batch'):
+        setattr(indata, 'in_id_batch', indata_w_attrs.in_id_batch)
+
+    if hasattr(indata_w_attrs, 'label_batch'):
+        setattr(indata, 'label_batch', indata_w_attrs.label_batch)
+
+
 class Tracker(NeuronWiseOperations, th.nn.Module):
     """ Tracker interface for neuron level statistics. """
     def update(self, tensor: th.Tensor):
