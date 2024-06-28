@@ -273,7 +273,7 @@ class LinearWithNeuronOps(nn.Linear, LayerWiseOperations):
             return
 
         activation_map_bin_ed = activation_map > 0
-        copy_forward_tracked_attrs(activation_map_bin_ed, activation_map) 
+        copy_forward_tracked_attrs(activation_map_bin_ed, activation_map)
         tracker.update(activation_map_bin_ed)
 
     def to(self, device):
