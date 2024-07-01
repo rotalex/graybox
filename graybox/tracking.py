@@ -163,17 +163,24 @@ class TriggersTracker(Tracker):
             state_dict, prefix, local_metadata, strict,
             missing_keys, unexpected_keys, error_msgs)
 
-    def to(self, device: th.device = None):
-        """
-        Moves the component fields and states to the given device.
+    def to(
+            self,
+            device: th.device = None,
+            dtype: th.dtype = None,
+            non_blocking: bool = False):
+        """ Moves the component fields and states to the given device.
 
         Args:
             device (th.device, optional): Defaults to None.
+            dtype (th.dtype, optional): Defaults to None.
+            non_blocking (bool, optional): Defaults to False.
         """
         self.device = device
         if self.device is not None:
-            self.triggrs_by_neuron = self.triggrs_by_neuron.to(self.device)
-            self.updates_by_neuron = self.updates_by_neuron.to(self.device)
+            self.triggrs_by_neuron = self.triggrs_by_neuron.to(
+                device, dtype=dtype, non_blocking=non_blocking)
+            self.updates_by_neuron = self.updates_by_neuron.to(
+                device, dtype=dtype, non_blocking=non_blocking)
 
     def update(self, tensor: th.Tensor):
         """
