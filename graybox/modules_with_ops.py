@@ -265,22 +265,11 @@ class LinearWithNeuronOps(nn.Linear, LayerWiseOperations):
     def trackers(self):
         return [self.eval_dataset_tracker, self.train_dataset_tracker]
 
-    def register(
-            self,
-            activation_map: th.Tensor):
-        tracker = self.get_tracker()
-        if tracker is None or tracker is None or activation_map is None:
-            return
-
-        activation_map_bin_ed = activation_map > 0
-        copy_forward_tracked_attrs(activation_map_bin_ed, activation_map)
-        tracker.update(activation_map_bin_ed)
-
-    def to(self, device):
-        self.device = device
-        super().to(device)
+    def to(self, *args, **kwargs):
+        self.device = args[0]
+        super().to(*args, **kwargs)
         for tracker in self.trackers():
-            tracker.to(device)
+            tracker.to(*args, **kwargs)
 
     def reorder(self, indices: List[int]):
         neurons = set(range(self.out_features))
@@ -468,10 +457,20 @@ class LinearWithNeuronOps(nn.Linear, LayerWiseOperations):
                 th.cat((self.weight.data, new_wght), dim=1)).to(self.device)
         super().to(self.device)
 
+    def register(
+            self,
+            activation_map: th.Tensor):
+        tracker = self.get_tracker()
+        if tracker is None or tracker is None or activation_map is None:
+            return
+        activation_map_bin_ed = activation_map > 0
+        copy_forward_tracked_attrs(activation_map_bin_ed, activation_map)
+        tracker.update(activation_map_bin_ed)
+
     def forward(self, data: th.Tensor, skip_register: bool = False):
         activation_map = super().forward(data)
+        copy_forward_tracked_attrs(activation_map, data)
         if not skip_register:
-            copy_forward_tracked_attrs(activation_map, data)
             self.register(activation_map)
         return activation_map
 
@@ -563,27 +562,11 @@ class Conv2dWithNeuronOps(nn.Conv2d, LayerWiseOperations):
     def trackers(self):
         return [self.eval_dataset_tracker, self.train_dataset_tracker]
 
-    def register(
-            self,
-            activation_map: th.Tensor,
-            original_input: th.Tensor):
-        tracker = self.get_tracker()
-        if tracker is None or activation_map is None or input is None:
-            return
-
-        activation_map = (activation_map > 0).long()
-
-        # This should work for both batched input and un-batched inputs
-        # (such as in tests).
-        processed_activation_map = th.sum(activation_map, dim=(-2, -1))
-        copy_forward_tracked_attrs(processed_activation_map, original_input)
-        tracker.update(processed_activation_map)
-
-    def to(self, device):
-        self.device = device
-        super().to(device)
+    def to(self, *args, **kwargs):
+        self.device = args[0] if args else kwargs.get('device')
+        super().to(*args, **kwargs)
         for tracker in self.trackers():
-            tracker.to(device)
+            tracker.to(*args, **kwargs)
 
     def reorder(self, indices: List[int]):
         neurons = set(range(self.out_channels))
@@ -765,7 +748,9 @@ class Conv2dWithNeuronOps(nn.Conv2d, LayerWiseOperations):
         super().to(self.device)
 
     def add_incoming_neurons(
-            self, neuron_count: int, skip_initialization: bool = False):
+            self,
+            neuron_count: int,
+            skip_initialization: bool = False):
         parameters = th.zeros(
             (self.out_channels, neuron_count, *self.kernel_size)
         ).to(self.device)
@@ -781,12 +766,26 @@ class Conv2dWithNeuronOps(nn.Conv2d, LayerWiseOperations):
         self.incoming_neuron_count = self.in_channels
         super().to(self.device)
 
+    def register(self, activation_map: th.Tensor):
+        tracker = self.get_tracker()
+        if tracker is None or activation_map is None or input is None:
+            return
+
+        activation_map = (activation_map > 0).long()
+
+        # This should work for both batched input and un-batched inputs
+        # (such as in tests).
+        processed_activation_map = th.sum(activation_map, dim=(-2, -1))
+        copy_forward_tracked_attrs(processed_activation_map, activation_map)
+        tracker.update(processed_activation_map)
+
     def forward(self,
-                input: th.Tensor,
+                data: th.Tensor,
                 skip_register: bool = False):
-        activation_map = super().forward(input)
+        activation_map = super().forward(data)
+        copy_forward_tracked_attrs(activation_map, data)
         if not skip_register:
-            self.register(activation_map, input)
+            self.register(activation_map)
         return activation_map
 
     def summary_repr(self):
@@ -811,9 +810,23 @@ class BatchNorm2dWithNeuronOps(nn.BatchNorm2d, LayerWiseOperations):
         )
         self.device = device
 
-    def to(self, device):
-        super().to(device)
-        self.device = device
+    def to(self, *args, **kwargs):
+        super().to(*args, **kwargs)
+        self.device = args[0] if args else kwargs.get('device')
+
+    def __hash__(self):
+        return hash(str(self))
+
+    def __eq__(self, other: "BatchNorm2dWithNeuronOps") -> bool:
+        weights_eq, bias_eq = True, True
+        if self.weight is not None:
+            weights_eq = th.allclose(self.weight.data, other.weight.data)
+        if self.bias is not None:
+            bias_eq = th.allclose(self.bias.data, other.bias.data)
+        return self.weight.device == other.weight.device and \
+            weights_eq and bias_eq and \
+            th.allclose(self.running_mean, other.running_mean) and \
+            th.allclose(self.running_var, other.running_var)
 
     def reorder(self, indices: List[int]):
         neurons = set(range(self.num_features))

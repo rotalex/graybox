@@ -33,6 +33,9 @@ class LinearWithNeuronsOpsTest(unittest.TestCase):
             self.zeros_module.bias.data = th.nn.Parameter(
                 th.zeros(4), requires_grad=False)
 
+    def test_modules_got_ids(self):
+        self.assertNotEqual(self.module.id, self.zeros_module.id)
+
     def reorder_outgoing_neurons(self, device):
         self.module.to(device)
         self.module.reorder([3, 1, 0, 2])
@@ -919,3 +922,7 @@ class BatchNorm2dWithNeuronOpsTest(unittest.TestCase):
 
     def test_add_neurons_gpu(self):
         self.add_neurons(th.device('cuda'))
+
+
+if __name__ == '__main__':
+    unittest.main()
