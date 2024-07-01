@@ -889,7 +889,7 @@ class BatchNorm2dWithNeuronOps(nn.BatchNorm2d, LayerWiseOperations):
             self.running_mean[neuron_id] = 0.0
             self.running_var[neuron_id] = 1.0
 
-    def add_neurons(self, neuron_count: int):
+    def add_neurons(self, neuron_count: int, skip_initialization: bool = False):
         parameters = th.ones(neuron_count, ).to(self.weight.device)
         biases = th.zeros(neuron_count,).to(self.weight.device)
         with th.no_grad():
