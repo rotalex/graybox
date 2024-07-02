@@ -906,6 +906,28 @@ class BatchNorm2dWithNeuronOps(nn.BatchNorm2d, LayerWiseOperations):
             )
         self.num_features += neuron_count
 
+    def _load_from_state_dict(
+            self, state_dict, prefix, local_metadata, strict,
+            missing_keys, unexpected_keys, error_msgs):
+        tnsr = self._find_value_for_key_pattern('.weight', state_dict)
+        if tnsr is not None:
+            out_size = tnsr.shape[0]
+            with th.no_grad():
+                self.weight.data = nn.Parameter(
+                    th.ones_like(tnsr)).to(self.device)
+                if self.bias is not None:
+                    self.bias.data = nn.Parameter(
+                        th.ones(out_size)).to(self.device)
+                if self.running_mean is not None:
+                    self.running_mean = th.zeros(out_size).to(self.device)
+                if self.running_var is not None:
+                    self.running_var = th.zeros(out_size).to(self.device)
+            self.neuron_count = out_size
+
+        super()._load_from_state_dict(
+            state_dict, prefix, local_metadata, strict,
+            missing_keys, unexpected_keys, error_msgs)
+
 
 def is_module_with_ops(obj):
     return issubclass(type(obj), LayerWiseOperations)
