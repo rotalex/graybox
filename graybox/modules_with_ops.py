@@ -876,18 +876,25 @@ class BatchNorm2dWithNeuronOps(nn.BatchNorm2d, LayerWiseOperations):
         self.out_channels = len(kept_neurons)
         self.neuron_count = self.out_channels
 
-    def reset(self, indices: List[int]):
+    def reset(
+            self,
+            indices: List[int],
+            skip_initialization: bool = False,
+            perturbation_ratio: float | None = None):
+        del skip_initialization
+        del perturbation_ratio
+
         neurons = set(range(self.num_features))
         if not set(indices) & neurons:
             raise ValueError(
                 f"BatchNorm2dWithNeuronOps.reset indices and neurons set do not "
                 f"overlapp: {indices} & {neurons} => {indices & neurons}")
-
-        for neuron_id in indices:
-            self.weight[neuron_id] = th.zeros_like(self.weight[neuron_id])
-            self.bias[neuron_id] = 0
-            self.running_mean[neuron_id] = 0.0
-            self.running_var[neuron_id] = 1.0
+        with th.no_grad():
+            for neuron_id in indices:
+                self.weight[neuron_id] = 0
+                self.bias[neuron_id] = 0
+                self.running_mean[neuron_id] = 0.0
+                self.running_var[neuron_id] = 1.0
 
     def add_neurons(self, neuron_count: int, skip_initialization: bool = False):
         parameters = th.ones(neuron_count, ).to(self.weight.device)
