@@ -10,44 +10,12 @@ from torchvision import datasets as ds
 from torchvision import transforms as T
 from tqdm import tqdm
 from os import path
-
-from graybox.model_with_ops import NetworkWithOps
-from graybox.model_with_ops import DepType
-from graybox.modules_with_ops import BatchNorm2dWithNeuronOps
-from graybox.modules_with_ops import Conv2dWithNeuronOps
-from graybox.modules_with_ops import LinearWithNeuronOps
 from graybox.tracking import TrackingMode
+
+from .test_utils import MNISTModel
 
 
 th.manual_seed(0)
-
-
-class MNISTModel(NetworkWithOps):
-    def __init__(self):
-        super(MNISTModel, self).__init__()
-        self.tracking_mode = TrackingMode.DISABLED
-
-        self.conv0 = Conv2dWithNeuronOps(
-            in_channels=1, out_channels=16, kernel_size=3)
-        self.bnorm0 = BatchNorm2dWithNeuronOps(16)
-        self.linear0 = LinearWithNeuronOps(in_features=16, out_features=10)
-
-        self.register_dependencies({
-            (self.conv0, self.bnorm0, DepType.SAME),
-            (self.bnorm0, self.linear0, DepType.INCOMING),
-        })
-
-    def forward(self, input: th.tensor):
-        self.maybe_update_age(input)
-        x = self.conv0(input)
-        x = self.bnorm0(x)
-        x = F.relu(x)
-        x = F.max_pool2d(x, 16)
-        x = x.view(x.size(0), -1)
-        output = self.linear0(x)
-        output = F.log_softmax(output, dim=1)
-        return output
-
 
 class NetworkWithOpsTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -65,7 +33,7 @@ class NetworkWithOpsTest(unittest.TestCase):
 
         self.train_loader = th.utils.data.DataLoader(
             self.dataset_train, batch_size=512, shuffle=True)
-        
+
         self.eval_loader = th.utils.data.DataLoader(
             self.dataset_eval, batch_size=512)
 
@@ -81,7 +49,7 @@ class NetworkWithOpsTest(unittest.TestCase):
 
     def test_store_and_load(self):
         self.dummy_network.set_tracking_mode(TrackingMode.TRAIN)
-        prediction = self.dummy_network.forward(self.tracked_input)
+        _ = self.dummy_network.forward(self.tracked_input)
         replicated_model = MNISTModel()
         self.assertNotEqual(self.dummy_network, replicated_model)
         state_dict_file_path = path.join(self.test_dir, 'mnist_model.txt')
@@ -204,6 +172,7 @@ class NetworkWithOpsTest(unittest.TestCase):
         corrects_after_reinit = self.eval_one_epoch()
         self.assertLessEqual(
             corrects_first_epoch, corrects_after_reinit)
+
 
 if __name__ == '__main__':
     unittest.main()
