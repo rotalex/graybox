@@ -1,9 +1,11 @@
 """Test for the core and main object of the graybox package."""
 import unittest
+import tempfile
+
 from unittest.mock import ANY
 from unittest import mock
-import torch as th
 
+import torch as th
 from torch import optim
 from torchvision import transforms as T
 from torchvision import datasets as ds
@@ -16,6 +18,7 @@ from .test_utils import MNISTModel
 class ExperimentTest(unittest.TestCase):
     def setUp(self) -> None:
         th.manual_seed(1337)
+        self.temporary_directory = tempfile.mkdtemp()
         device = th.device("cuda:0")
         transform = T.Compose([T.ToTensor()])
         data_eval = ds.MNIST("../data", train=False, transform=transform)
@@ -33,6 +36,7 @@ class ExperimentTest(unittest.TestCase):
             learning_rate=1e-3,
             batch_size=32,
             name="x0",
+            root_log_dir=self.temporary_directory,
             logger=self.summary_writer_mock,
             train_shuffle=False)        
 

@@ -1,6 +1,5 @@
 import torch as th
 import unittest
-import shutil
 import tempfile
 
 from torch import optim
@@ -13,6 +12,7 @@ from unittest.mock import ANY
 from graybox.checkpoint import CheckpointManager
 from graybox.experiment import Experiment
 
+from .test_utils import MNISTModel
 
 class CheckpointManagerTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -35,6 +35,7 @@ class CheckpointManagerTest(unittest.TestCase):
             learning_rate=1e-3,
             batch_size=32,
             name="x0",
+            root_log_dir=self.temporary_directory,
             logger=self.summary_writer_mock,
             train_shuffle=False) 
 

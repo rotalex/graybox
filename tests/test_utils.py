@@ -1,4 +1,7 @@
+import torch as th
+
 from torch.nn import functional as F
+
 from graybox.model_with_ops import NetworkWithOps
 from graybox.model_with_ops import DepType
 from graybox.modules_with_ops import BatchNorm2dWithNeuronOps
