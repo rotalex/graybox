@@ -43,9 +43,11 @@ class Dash:
         self.lines_2_annot = pd.read_pickle(lines_2_annot_path)
 
     def get_graph_names(self):
+        """Returns a list of graph names that have been reported."""
         return self.graph_n_lines["graph_name"].unique()
 
     def get_line_names(self):
+        """Returns a list of experiment(line names) that have been reported."""
         return self.graph_n_lines["line_name"].unique()
 
     def _get_value_closest_to_step(self, graph_name, line_name, step):
@@ -62,6 +64,13 @@ class Dash:
         return closest_match_value
 
     def add_scalars(self, graph_name, name_2_value, global_step: int):
+        """"Add a scalar value to the dashboard.
+        Args:
+            graph_name: The name of the graph to which the scalar belongs.
+            name_2_value: A dictionary with the name of the scalar as key and
+                the value as value.
+            global_step: The global step of the experiment.
+        """
         data_frame_lines = len(self.graph_n_lines)
 
         for line_name, line_value in name_2_value.items():
@@ -73,6 +82,17 @@ class Dash:
     def add_annotations(
             self, graph_names, line_name, annotation, global_step,
             metadata=None):
+        """Add an annotation to the dashboard. The annotation is a mark on the
+        plot line signaling that an event happened such as for instance, a
+        checkpoint has been saved.
+        Args:
+            graph_names: The names of the graphs to which the annotation
+                belongs.
+            line_name: The name of the line to which the annotation belongs.
+            annotation: The annotation message.
+            global_step: The global step of the experiment.
+            metadata: Additional information to be stored with the annotation. 
+        """
 
         if len(graph_names) == 0:
             return
