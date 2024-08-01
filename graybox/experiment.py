@@ -110,6 +110,12 @@ class Experiment:
             lambda model: self._update_optimizer(model))
 
         self.lock = Lock()
+        self.model.to(self.device)
+
+    def __repr__(self):
+        with self.lock:
+            return f"[exp] {id(self)} is_train: {self.is_training} " + \
+                f"steps: {self.training_steps_to_do}"
 
     def _update_optimizer(self, model):
         self.optimizer = self.optimizer_class(
@@ -242,7 +248,10 @@ class Experiment:
     def train_one_step(self):
         """Train the model for one step."""
         with self.lock:
+            if self.is_training is False:
+                return
             self.occured_train_steps += 1
+
         self.model.train()
         self.optimizer.zero_grad()
         self.model.set_tracking_mode(TrackingMode.TRAIN)
@@ -288,13 +297,11 @@ class Experiment:
             n (int): The number of steps to be performed.
         """
         train_range = range(n)
-        self.set_is_training(True)
         try:
             for _ in train_range:
                 self.train_one_step()
         except KeyboardInterrupt:
             pass
-        self.set_is_training(False)
 
     def report_parameters_count(self):
         """Report the number of parameters of the model to the tensorboard."""
@@ -379,20 +386,17 @@ class Experiment:
         """
         train_range = tqdm(range(n)) if self.tqdm_display else range(n)
         try:
-            self.set_is_training(True)
             for _ in train_range:
                 self.train_step_or_eval_full()
         except KeyboardInterrupt:
             pass
-        except Exception as e:
-            print(e)
-        self.set_is_training(False)
 
     def toggle_training_status(self):
         """Toggle the training status. If the model is training, it will stop.
         """
         with self.lock:
             self.is_training = not self.is_training
+        print("[exp]toggle is_training")
 
     def set_training_steps_to_do(self, steps: int):
         """Set the number of training steps to be performed.
@@ -411,6 +415,7 @@ class Experiment:
         """Set whether the model is training."""
         with self.lock:
             self.is_training = is_training
+        print("[exp].set_is_training ", is_training)
 
     def get_training_steps_to_do(self) -> int:
         """"Get the number of training steps to be performed."""

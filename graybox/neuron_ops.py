@@ -4,6 +4,17 @@ from typing import List
 
 class NeuronWiseOperations:
     """ This module contains the interface for neuron-wise operations. """
+    MODULE_ID: int = 0
+
+    def assign_id(self):
+        """Self assign an id for each unique instance of this class."""
+
+        self.module_id = NeuronWiseOperations.MODULE_ID
+        NeuronWiseOperations.MODULE_ID += 1
+
+    def get_module_id(self):
+        """Return the id of the instance."""
+        return self.module_id
 
     def reorder(self, indices: List[int]):
         """

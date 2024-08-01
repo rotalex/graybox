@@ -30,6 +30,7 @@ class Dash:
 
     def _load(self):
         if not os.path.exists(self.root_directory):
+            print("Dash._load ", self.root_directory, " does not exist")
             return
         graph_n_lines_path = os.path.join(
             self.root_directory, 'graph_n_lines.pkl')
@@ -37,6 +38,9 @@ class Dash:
             self.root_directory, 'lines_2_annot.pkl')
         if not os.path.exists(graph_n_lines_path) or \
                 not os.path.exists(lines_2_annot_path):
+            print(
+                f"Dash._load {graph_n_lines_path} or {lines_2_annot_path} "
+                f"does not exist.")
             return
 
         self.graph_n_lines = pd.read_pickle(graph_n_lines_path)
@@ -51,15 +55,19 @@ class Dash:
         return self.graph_n_lines["line_name"].unique()
 
     def _get_value_closest_to_step(self, graph_name, line_name, step):
+        closest_match_value = None
         line_and_graph_df = self.graph_n_lines[
             (self.graph_n_lines["graph_name"] == graph_name) &
             (self.graph_n_lines["line_name"] == line_name)
         ]
-        closest_match = \
-            (line_and_graph_df["step"] - step).abs().argsort().iloc[0]
+        try:
+            closest_match = \
+                (line_and_graph_df["step"] - step).abs().argsort().iloc[0]
 
-        closest_match_value = \
-            line_and_graph_df.iloc[closest_match]["line_value"]
+            closest_match_value = \
+                line_and_graph_df.iloc[closest_match]["line_value"]
+        except IndexError:
+            pass
 
         return closest_match_value
 

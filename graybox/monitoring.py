@@ -18,6 +18,8 @@ class NeuronTriggeringStatsMonitor(Monitor):
             print("Conv2dLayer stats:" + legend)
         elif isinstance(layer, nn.Linear):
             print("LinearLayer stats:" + legend)
+        else:
+            return
 
         neuron_count = layer.train_dataset_tracker.get_neuron_number()
         for neuron_id in range(neuron_count):
@@ -30,7 +32,7 @@ class NeuronTriggeringStatsMonitor(Monitor):
 
     def display_stats(self, experiment: "Experiment"):
         print("=" * 100)
-        for layer_idx, layer in enumerate(experiment.model.get_layers()):
+        for layer_idx, layer in enumerate(experiment.model.layers()):
             print(f"Layer#{layer_idx} ", end='')
             self.print_counters(layer)
             print('-' * 100)
@@ -190,10 +192,10 @@ class NeuronStatsWithDifferencesMonitor(Monitor):
 
     def display_stats(self, experiment: "Experiment"):
         print("=" * 100)
-        for layer_idx, layer in enumerate(experiment.model.get_layers()):
+        for layer_idx, layer in enumerate(experiment.model.layers):
             prev_exp_layer = None
             if self.last_model is not None:
-                prev_exp_layer = self.last_model.get_layers()[
+                prev_exp_layer = self.last_model.layers[
                     layer_idx]
             print(f"Layer#{layer_idx} ", end='')
             self.print_counters(layer, prev_exp_layer)
@@ -250,7 +252,7 @@ class PairwiseNeuronSimilarity(Monitor):
 
     def display_stats(self, experiment: "Experiment"):
         print("=" * 100)
-        for layer_idx, layer in enumerate(experiment.model.get_layers()):
+        for layer_idx, layer in enumerate(experiment.model.layers):
             number_of_neurons = layer.weight.data.shape[0]
             pairwise_similarities = th.zeros(
                 (number_of_neurons, number_of_neurons))

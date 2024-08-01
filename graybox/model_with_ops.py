@@ -1,6 +1,7 @@
 """ Classes related to network architecture operations and internals. """
 import collections
 import enum
+import functools
 
 from typing import Dict, List, Set
 from torch import nn
@@ -100,13 +101,12 @@ class _ModulesDependencyManager:
 
 
 def get_children(module: nn.Module):
-    flatt_children = [module] if is_module_with_ops(module) else []
-
-    if list(module.children()) == []:
-        return flatt_children
-
+    if is_module_with_ops(module):
+        return [module]
+    flatt_children = []
     for child in module.children():
         flatt_children.extend(get_children(child))
+
     return flatt_children
 
 
@@ -117,6 +117,7 @@ class NetworkWithOps(nn.Module):
         self.tracking_mode = TrackingMode.DISABLED
         self._architecture_change_hook_fns = []
         self._dep_manager = _ModulesDependencyManager()
+        self.linearized_layers = []
 
     def register_dependencies(self, dendencies_list: List):
         """Register the dependencies between children modules.
@@ -128,10 +129,10 @@ class NetworkWithOps(nn.Module):
         """
         for child_module in self.layers:
             self._dep_manager.register_module(
-                id(child_module), child_module)
+                child_module.get_module_id(), child_module)
 
         for module1, module2, value in dendencies_list:
-            id1, id2 = id(module1), id(module2)
+            id1, id2 = module1.get_module_id(), module2.get_module_id()
             if value == DepType.INCOMING:
                 self._dep_manager.register_incoming_dependency(id1, id2)
             elif value == DepType.SAME:
@@ -139,12 +140,25 @@ class NetworkWithOps(nn.Module):
 
     @property
     def layers(self):
-        return get_children(self)
+        if not self.linearized_layers:
+            self.linearized_layers = get_children(self)
+        return self.linearized_layers
 
-    def reset_stats(self):
+    def get_layer_by_id(self, layer_id: int):
+        return self._dep_manager.id_2_layer[layer_id]
+
+    def reset_all_stats(self):
         for layer in self.layers:
             if hasattr(layer, "reset_stats"):
                 layer.reset_stats()
+
+    def reset_stats_by_layer_id(self, layer_id: int):
+        if layer_id not in self._dep_manager.id_2_layer:
+            raise ValueError(
+                f"[NetworkWithOps.prune] No module with id {layer_id}")
+
+        module = self._dep_manager.id_2_layer[layer_id]
+        module.reset_stats()
 
     def get_parameter_count(self):
         count = 0
@@ -156,7 +170,9 @@ class NetworkWithOps(nn.Module):
         self._architecture_change_hook_fns.append(fn)
 
     def __hash__(self):
-        return hash(str(self))
+        return hash(self.seen_samples) + \
+            hash(self.tracking_mode) + \
+            hash(self._dep_manager)
 
     def set_tracking_mode(self, mode: TrackingMode):
         self.tracking_mode = mode
@@ -248,14 +264,11 @@ class NetworkWithOps(nn.Module):
         for hook_fn in self._architecture_change_hook_fns:
             hook_fn(self)
 
-        # self.spike_scalars["prune_neurons"].value = 1.0
-
     def add_neurons(self,
                     layer_id: int,
                     neuron_count: int,
-                    skip_initialization: bool = True,
+                    skip_initialization: bool = False,
                     through_flatten: bool = False):
-
         if layer_id not in self._dep_manager.id_2_layer:
             raise ValueError(
                 f"[NetworkWithOps.add_neurons] No module with id {layer_id}")
@@ -289,8 +302,13 @@ class NetworkWithOps(nn.Module):
                 through_flatten: bool = False):
 
         if layer_id not in self._dep_manager.id_2_layer:
+            id_and_type = []
+            for id in self._dep_manager.id_2_layer:
+                id_and_type.append(
+                    (id, type(self._dep_manager.id_2_layer[id])))
             raise ValueError(
-                f"[NetworkWithOps.reorder] No module with id {layer_id}")
+                f"[NetworkWithOps.reorder] No module with id {layer_id}"
+                f" in {str(id_and_type)}")
 
         module = self._dep_manager.id_2_layer[layer_id]
         module.reorder(indices)
@@ -312,8 +330,13 @@ class NetworkWithOps(nn.Module):
 
     def reorder_neurons_by_trigger_rate(self, layer_id: int):
         if layer_id not in self._dep_manager.id_2_layer:
+            id_and_type = []
+            for id in self._dep_manager.id_2_layer:
+                id_and_type.append(
+                    (id, type(self._dep_manager.id_2_layer[id])))
             raise ValueError(
-                f"[NetworkWithOps.reorder_by] No module with id {layer_id}")
+                f"[NetworkWithOps.reorder_by] No module with id {layer_id}"
+                f" in {str(id_and_type)}")
 
         module = self._dep_manager.id_2_layer[layer_id]
         if not hasattr(module, 'train_dataset_tracker'):
