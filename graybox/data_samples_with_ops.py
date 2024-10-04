@@ -18,6 +18,7 @@ class SampleStats(str, Enum):
     EXPOSURE_AMOUNT = "exposure_amount"
     DENY_LISTED = "deny_listed"
     LABEL = "label"
+    SAMPLE_ID = "sample_id"
 
     @classmethod
     def ALL(cls):
@@ -137,6 +138,10 @@ class DataSampleTrackingWrapper(Dataset):
             if raw:
                 return self._getitem_raw(sample_id)[2]
             return self[sample_id][2]  # 0 -> data; 1 -> index; 2 -> label;
+        if stat_name == SampleStats.SAMPLE_ID:
+            if raw:
+                return self._getitem_raw(sample_id)[1]
+            return self[sample_id][1]  # 0 -> data; 1 -> index; 2 -> label;
         value = self.sample_statistics[stat_name][sample_id]
         # Hacky fix, for some reason, we store arrays for this column
         if type(value) is np.ndarray:
@@ -171,6 +176,7 @@ class DataSampleTrackingWrapper(Dataset):
         self.set(sample_id, SampleStats.EXPOSURE_AMOUNT.value, exposure_amount)
         if sample_id not in self.sample_statistics[SampleStats.DENY_LISTED]:
             self.set(sample_id, SampleStats.DENY_LISTED, False)
+        self.set(sample_id=sample_id, stat_name=SampleStats.SAMPLE_ID, stat_value=sample_id)
 
     def update_batch_sample_stats(self,
                                   model_age: int,
@@ -201,13 +207,12 @@ class DataSampleTrackingWrapper(Dataset):
 
     def denylist_samples(self, denied_samples_ids: Set[int] | None):
         self.dataframe = None
-        if denied_samples_ids is None:
-            denied_samples_ids = set(range(len(self.wrapped_dataset)))
-
-        for sample_id in denied_samples_ids:
-            if self._actually_deny_samples(sample_id):
+        for sample_id in range(len(self.wrapped_dataset)):
+            if sample_id in denied_samples_ids:
                 self.denied_sample_cnt += 1
-            self.sample_statistics[SampleStats.DENY_LISTED][sample_id] = True
+                self.sample_statistics[SampleStats.DENY_LISTED][sample_id] = True
+            else:
+                self.sample_statistics[SampleStats.DENY_LISTED][sample_id] = False
 
         self._update_index_to_index()
 
@@ -229,8 +234,11 @@ class DataSampleTrackingWrapper(Dataset):
 
         self._update_index_to_index()
 
-    def _get_denied_sample_ids(self, predicate: SamplePredicateFn) -> Set[int]:
+    def _get_denied_sample_ids(self, predicate: SamplePredicateFn | None) -> Set[int]:
         denied_samples_ids = set()
+        if predicate is None:
+            return denied_samples_ids
+
         for sample_id in range(len(self.wrapped_dataset)):
 
             # These are hard-codes for classification tasks, so we treat them
@@ -261,6 +269,7 @@ class DataSampleTrackingWrapper(Dataset):
     def deny_samples_with_predicate(self, predicate: SamplePredicateFn):
         self.dataframe = None
         denied_samples_ids = self._get_denied_sample_ids(predicate)
+        print("denied samples with predicate ", denied_samples_ids)
         self.denylist_samples(denied_samples_ids)
 
     def deny_samples_and_sample_allowed_with_predicate(
@@ -304,6 +313,57 @@ class DataSampleTrackingWrapper(Dataset):
                     sorted(denied_samples_ids), target_allowed_samples_no)
                 self.allowlist_samples(override_allowed_sample_ids)
 
+    def apply_predicate_with_weights_for_positives_and_negatives(
+        self,
+        predicate: SamplePredicateFn,
+        positives: float | None,
+        negatives: float | None,
+        verbose: bool = False
+    ):
+        """
+            Apply denylisting predicate to samples, but control how many
+            positives and negatives are kept in the resulting set.
+        """
+
+        if positives is None:
+            positives = 1.0
+        if negatives is None:
+            negatives = 1.0
+
+        self.dataframe = None
+        denied_samples_ids = self._get_denied_sample_ids(predicate)
+        allowed_sample_ids = set(range(len(self.wrapped_dataset)))
+        total_samples_numb = len(self.wrapped_dataset)
+        denied_samples_cnt = len(denied_samples_ids)
+        allowed_samples_no = total_samples_numb - denied_samples_cnt
+
+        allowed_samples_no = int(allowed_samples_no * positives) \
+            if positives <= 1.0 else int(positives)
+        denied_samples_cnt = int(denied_samples_cnt * negatives) \
+            if negatives <= 1.0 else int(negatives)
+
+        if verbose:
+            print(f'DataSampleTrackingWrapper'
+                  f'apply_predicate_with_weights_for_positives_and_negatives '
+                  f'denied {denied_samples_cnt} samples '
+                  f'allowed {allowed_samples_no} samples.')
+
+        if denied_samples_cnt > 0:
+            override_denied_sample_ids = rnd.sample(
+                sorted(denied_samples_ids), denied_samples_cnt)
+        if allowed_samples_no > 0:
+            override_allowed_sample_ids = rnd.sample(
+                sorted(allowed_sample_ids), allowed_samples_no)
+
+        if verbose:
+            print(f'DataSampleTrackingWrapper'
+                  f'apply_predicate_with_weights_for_positives_and_negatives '
+                  f'denied ids {override_denied_sample_ids[:20]} '
+                  f'allowed ids {override_allowed_sample_ids[:20]}.')
+
+        self.denylist_samples(override_denied_sample_ids)
+        self.allowlist_samples(override_allowed_sample_ids)
+
     def _get_stats_dataframe(self, limit: int = -1):
         data_frame = pd.DataFrame(
             {stat_name: [] for stat_name in SampleStats.ALL()})
@@ -317,6 +377,7 @@ class DataSampleTrackingWrapper(Dataset):
 
     def as_records(self, limit: int = -1):
         rows = []
+        denied = 0
         for idx, sample_id in enumerate(
                 self.sample_statistics[SampleStats.PREDICTION_AGE]):
             if limit >= 0 and idx >= limit:
@@ -325,7 +386,13 @@ class DataSampleTrackingWrapper(Dataset):
             for stat_name in SampleStats.ALL():
                 row[stat_name] = self.get(sample_id, stat_name, raw=True)
             rows.append(row)
+            denied += int(row[SampleStats.DENY_LISTED])
         return rows
+
+    def get_actual_index(self, index: int) -> int:
+        if index not in self.idx_to_idx_remapp:
+            return index
+        return self.idx_to_idx_remapp[index]
 
     def get_dataframe(self, limit: int = -1) -> pd.DataFrame:
         if self.dataframe is None:

@@ -17,6 +17,7 @@ class Dash:
                 "step", "graph_name", "line_name", "annotation",
                 "line_value", "metadata"]
         )
+        self.hidden_line_names = []
 
         self._load()
 
@@ -52,7 +53,9 @@ class Dash:
 
     def get_line_names(self):
         """Returns a list of experiment(line names) that have been reported."""
-        return self.graph_n_lines["line_name"].unique()
+        line_names = self.graph_n_lines["line_name"].unique()
+
+        return [line_name for line_name in line_names if line_name not in self.hidden_line_names]
 
     def _get_value_closest_to_step(self, graph_name, line_name, step):
         closest_match_value = None
@@ -113,4 +116,37 @@ class Dash:
             self.lines_2_annot.loc[len(self.lines_2_annot)] = [
                 global_step, graph_name, line_name, annotation,
                 annotation_line_value, metadata]
+        self._dump()
+
+    def hide_line(self, line_name: str):
+        self.hidden_line_names.append(line_name)
+
+    def remove_line(self, line_name: str):
+        if line_name is None:
+            return
+        self.graph_n_lines = self.graph_n_lines[
+            self.graph_n_lines["line_name"] != line_name]
+        self.lines_2_annot = self.lines_2_annot[
+            self.lines_2_annot["line_name"] != line_name]
+        self._dump()
+
+    def get_experiment_name_for(self, checkpoint_id: int):
+        if checkpoint_id is None:
+            return
+        checkpoint_line = self.lines_2_annot[
+            self.lines_2_annot.metadata == checkpoint_id]
+        line_name = checkpoint_line.iloc[0].line_name
+
+        return line_name
+
+    def remove_data_after_checkpoint(self, checkpoint_id: int):
+        if checkpoint_id is None:
+            return
+        checkpoint_line = self.lines_2_annot[
+            self.lines_2_annot.metadata == checkpoint_id]
+        self.graph_n_lines = self.graph_n_lines[
+            self.graph_n_lines["step"] < checkpoint_line.iloc[0].step]
+        self.lines_2_annot = self.lines_2_annot[
+            self.lines_2_annot["step"] < checkpoint_line.iloc[0].step]
+        
         self._dump()

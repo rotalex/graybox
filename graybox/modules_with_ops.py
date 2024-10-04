@@ -170,11 +170,15 @@ class LayerWiseOperations(NeuronWiseOperations):
         # This is meant to be called in the children classes.
         def weight_grad_hook(weight_grad):
             for neuron_id, neuron_lr in self.neuron_2_learning_rate.items():
+                if neuron_id >= weight_grad.shape[0]:
+                    continue
                 neuron_grad = weight_grad[neuron_id]
                 neuron_grad *= neuron_lr
                 weight_grad[neuron_id] = neuron_grad
 
             for in_neuron_id, neuron_lr in self.incoming_neuron_2_lr.items():
+                if in_neuron_id >= weight_grad.shape[1]:
+                    continue
                 in_neuron_grad = weight_grad[:, in_neuron_id]
                 in_neuron_grad *= neuron_lr
                 weight_grad[:, in_neuron_id] = in_neuron_grad
@@ -182,14 +186,16 @@ class LayerWiseOperations(NeuronWiseOperations):
 
         def bias_grad_hook(bias_grad):
             for neuron_id, neuron_lr in self.neuron_2_learning_rate.items():
+                if neuron_id >= bias_grad.shape[0]:
+                    continue
                 neuron_grad = bias_grad[neuron_id]
                 neuron_grad *= neuron_lr
                 bias_grad[neuron_id] = neuron_grad
             return bias_grad
 
-        if hasattr(self, 'weight'):
+        if hasattr(self, 'weight') and self.weight is not None:
             self.weight.register_hook(weight_grad_hook)
-        if hasattr(self, 'bias'):
+        if hasattr(self, 'bias') and self.bias is not None:
             self.bias.register_hook(bias_grad_hook)
 
     def _find_value_for_key_pattern(self, key_pattern, state_dict):
@@ -250,8 +256,9 @@ class LinearWithNeuronOps(nn.Linear, LayerWiseOperations):
                 wshape = (out_size, in_size)
                 self.weight.data = nn.Parameter(
                     th.ones(wshape)).to(self.device)
-                self.bias.data = nn.Parameter(
-                    th.ones(out_size)).to(self.device)
+                if self.bias is not None:
+                    self.bias.data = nn.Parameter(
+                        th.ones(out_size)).to(self.device)
             self.in_features = in_size
             self.incoming_neuron_count = in_size
             self.out_features = out_size
@@ -486,11 +493,17 @@ class LinearWithNeuronOps(nn.Linear, LayerWiseOperations):
         copy_forward_tracked_attrs(activation_map_bin_ed, activation_map)
         tracker.update(activation_map_bin_ed)
 
-    def forward(self, data: th.Tensor, skip_register: bool = False):
+    def forward(self,
+                data: th.Tensor,
+                skip_register: bool = False,
+                intermediary: dict | None  = None
+            ):
         activation_map = super().forward(data)
         copy_forward_tracked_attrs(activation_map, data)
         if not skip_register:
             self.register(activation_map)
+        if intermediary is not None:
+            intermediary[self.get_module_id()] = activation_map
         return activation_map
 
     def summary_repr(self):
@@ -804,11 +817,15 @@ class Conv2dWithNeuronOps(nn.Conv2d, LayerWiseOperations):
 
     def forward(self,
                 data: th.Tensor,
-                skip_register: bool = False):
+                skip_register: bool = False,
+                intermediary: dict | None = None):
         activation_map = super().forward(data)
         copy_forward_tracked_attrs(activation_map, data)
         if not skip_register:
             self.register(activation_map)
+        if intermediary is not None:
+            print("forward iwth intermediary: ", self.get_module_id())
+            intermediary[self.get_module_id()] = activation_map
         return activation_map
 
     def summary_repr(self):
@@ -843,6 +860,8 @@ class BatchNorm2dWithNeuronOps(nn.BatchNorm2d, LayerWiseOperations):
 
     def __eq__(self, other: "BatchNorm2dWithNeuronOps") -> bool:
         if self.device != other.device:
+            return False
+        if self.weight.shape != other.weight.shape:
             return False
         weights_eq, bias_eq = True, True
         if self.weight is not None:
@@ -891,6 +910,7 @@ class BatchNorm2dWithNeuronOps(nn.BatchNorm2d, LayerWiseOperations):
 
         with th.no_grad():
             if self.weight is not None:
+                print(self.weight.data.shape, idx_tnsr)
                 self.weight.data = nn.Parameter(
                     th.index_select(self.weight.data, dim=0, index=idx_tnsr)).to(
                         self.device)
@@ -903,8 +923,8 @@ class BatchNorm2dWithNeuronOps(nn.BatchNorm2d, LayerWiseOperations):
             self.running_var = th.index_select(
                 self.running_var, dim=0, index=idx_tnsr)
 
-        self.out_channels = len(kept_neurons)
-        self.neuron_count = self.out_channels
+        self.num_features = len(kept_neurons)
+        self.neuron_count = self.num_features
 
     def reset(
             self,

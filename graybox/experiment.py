@@ -41,7 +41,8 @@ class Experiment:
             train_shuffle: bool = True,
             tqdm_display: bool = True,
             get_train_data_loader: None = None,
-            get_eval_data_loader: None = None):
+            get_eval_data_loader: None = None,
+            skip_loading: bool = False):
 
         self.name = name
         self.model = model
@@ -99,8 +100,9 @@ class Experiment:
         self.chkpt_manager = CheckpointManager(root_log_dir)
         self.stats_monitor = NeuronStatsWithDifferencesMonitor()
 
-        self.chkpt_manager.load(
-            self.chkpt_manager.get_latest_experiment(), self)
+        if not skip_loading:
+            self.chkpt_manager.load(
+                self.chkpt_manager.get_latest_experiment(), self)
 
         self.train_loop_callbacks = []
         self.train_loop_clbk_freq = 50
@@ -324,10 +326,19 @@ class Experiment:
             self.eval_iterator = iter(self.eval_loader)
             input, output = self._pass_one_batch(self.eval_iterator)
 
-        test_loss = F.cross_entropy(
-            output, input.label_batch, reduction='sum').item()
+        losses_batch = F.cross_entropy(
+            output, input.label_batch, reduction='none')
+        test_loss = th.sum(losses_batch)
         pred = output.argmax(dim=1, keepdim=True)
-        correct = pred.eq(input.label_batch.view_as(pred)).sum().item()
+        
+        model_age = self.model.get_age()
+        self.eval_loader.dataset.update_batch_sample_stats(
+                model_age,
+                input.in_id_batch.detach().cpu().numpy(),
+                losses_batch.detach().cpu().numpy(),
+                pred.detach().cpu().numpy())
+        
+        correct = pred.eq(input.label_batch.view_as(pred)).cpu().sum().item()
         return test_loss, correct
 
     @th.no_grad()
@@ -341,7 +352,7 @@ class Experiment:
                 correct += step_corrects
         except KeyboardInterrupt:
             pass
-        return losses, correct
+        return losses.cpu(), correct
 
     @th.no_grad()
     def eval_full(self, skip_tensorboard: bool = False):
@@ -351,6 +362,8 @@ class Experiment:
 
         losses /= len(self.eval_loader.dataset)
         accuracy = 100. * correct / len(self.eval_loader.dataset)
+        
+        print("eval full: ", losses, accuracy)
 
         if not skip_tensorboard:
             self.logger.add_scalars(
@@ -426,3 +439,8 @@ class Experiment:
         """"Get all the train samples are records."""
         with self.lock:
             return self.train_loader.dataset.as_records()
+
+    def get_eval_records(self):
+        """"Get all the train samples are records."""
+        with self.lock:
+            return self.eval_loader.dataset.as_records()
