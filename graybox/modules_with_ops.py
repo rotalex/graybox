@@ -39,6 +39,16 @@ class LayerWiseOperations(NeuronWiseOperations):
         self.neuron_2_learning_rate = collections.defaultdict(lambda: 1.0)
         self.incoming_neuron_2_lr = collections.defaultdict(lambda: 1.0)
 
+    def get_individual_lr_repr(self):
+        repr = ""
+        for neuron_id, lr in self.neuron_2_learning_rate.items():
+            repr += f"[{neuron_id}: {lr}]"
+        for in_neuron_id, lr in self.incoming_neuron_2_lr.items():
+            repr += f"[{in_neuron_id}: {lr}]\n"
+        if not repr:
+            return "not individual learning rates"
+        return repr
+
     def set_tracking_mode(self, tracking_mode: TrackingMode):
         """ Set what samples are the stats related to (train/eval/etc). """
         self.tracking_mode = tracking_mode
@@ -120,6 +130,7 @@ class LayerWiseOperations(NeuronWiseOperations):
         invalid_ids = (neuron_ids - set(range(self.neuron_count)))
         if invalid_ids:
             raise ValueError(
+                f'Layer[id={self.id}]:'
                 f'Cannot set learning rate for neurons {invalid_ids} as they '
                 f'are outside the set of existent neurons {self.neuron_count}.'
             )
@@ -158,6 +169,7 @@ class LayerWiseOperations(NeuronWiseOperations):
         invalid_ids = (neuron_ids - set(range(self.incoming_neuron_count)))
         if invalid_ids:
             raise ValueError(
+                f'Layer[id={self.id}]:'
                 f'Cannot set learning rate for neurons {invalid_ids} as they '
                 f'are outside the set of existent neurons '
                 f'{self.incoming_neuron_count}.'
@@ -343,13 +355,14 @@ class LinearWithNeuronOps(nn.Linear, LayerWiseOperations):
             tracker.prune(indices)
 
     def prune_incoming_neurons(self, indices: Set[int]):
+        indices = set(indices)
         print(f"LinearWithNeuronOps[{self.get_module_id()}].prune_incoming {indices}")
         neurons = set(range(self.in_features))
         if not set(indices) & neurons:
             raise ValueError(
                 f"LinearWithNeuronOps.prune_incoming_neurons indices and "
                 f"neurons set do not overlapp: {indices} & {neurons} => "
-                f"{indices & neurons}")
+                f"{set(indices) & neurons}")
 
         kept_neurons = th.tensor(sorted(list(neurons - indices))).to(
             self.device)
@@ -470,7 +483,7 @@ class LinearWithNeuronOps(nn.Linear, LayerWiseOperations):
     def add_incoming_neurons(
             self,
             neuron_count: int,
-            skip_initialization: bool = False):
+            skip_initialization: bool = True):
         print(f"LinearWithNeuronOps[{self.get_module_id()}].add_incoming {neuron_count}")
         new_wght = th.zeros((self.out_features, neuron_count)).to(self.device)
         if not skip_initialization:
@@ -785,7 +798,7 @@ class Conv2dWithNeuronOps(nn.Conv2d, LayerWiseOperations):
     def add_incoming_neurons(
             self,
             neuron_count: int,
-            skip_initialization: bool = False):
+            skip_initialization: bool = True):
         print(f"Conv2dWithNeuronOps[{self.get_module_id()}].add_incoming {neuron_count}")
         parameters = th.zeros(
             (self.out_channels, neuron_count, *self.kernel_size)
@@ -848,6 +861,8 @@ class BatchNorm2dWithNeuronOps(nn.BatchNorm2d, LayerWiseOperations):
         super().__init__(
             num_features, eps, momentum, affine, track_running_stats, device, dtype
         )
+        self.neuron_count = num_features
+        
         self.assign_id()
         self.device = device
 
@@ -988,6 +1003,7 @@ class BatchNorm2dWithNeuronOps(nn.BatchNorm2d, LayerWiseOperations):
             missing_keys, unexpected_keys, error_msgs)
 
         self.num_features = out_size
+        self.neuron_count = out_size
 
 
 def is_module_with_ops(obj):

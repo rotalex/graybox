@@ -195,6 +195,20 @@ class NetworkWithOps(nn.Module):
     def get_age(self):
         return self.seen_samples
 
+    def freeze(self, layer_id: int, neuron_ids: Set[int] | None = None):
+        if layer_id not in self._dep_manager.id_2_layer:
+            raise ValueError(
+                f"[NetworkWithOps.freeze] No module with id {layer_id}")
+
+        module = self._dep_manager.id_2_layer[layer_id]
+        if neuron_ids is None:
+            neuron_ids = set(range(module.neuron_count))
+
+        for neuron_id in neuron_ids:
+            neuron_lr = module.get_per_neuron_learning_rate(neuron_id)
+            module.set_per_neuron_learning_rate(
+                neuron_ids={neuron_id}, lr=1.0 - neuron_lr)
+
     def reinit_neurons(
             self,
             layer_id: int,
@@ -244,22 +258,36 @@ class NetworkWithOps(nn.Module):
                 f"[NetworkWithOps.prune] No module with id {layer_id}")
 
         module = self._dep_manager.id_2_layer[layer_id]
-        module.prune(neuron_indices)
+        through_flatten = False
+        if hasattr(self, "flatten_conv_id"):
+            through_flatten = (self.flatten_conv_id == layer_id)
 
         # If the dependent layer is of type "SAME", say after a conv we have
         # batch_norm, then we have to update the layer after the batch_norm too
         for same_dep_id in self._dep_manager.get_dependent_ids(
                 layer_id, DepType.SAME):
-            self.prune(same_dep_id, neuron_indices)
+            self.prune(
+                same_dep_id, neuron_indices, through_flatten=through_flatten)
 
         # If the next layer is of type "INCOMING", say after a conv we have 
         # either a conv or a linear, then we add to incoming neurons.
         for incoming_id in self._dep_manager.get_dependent_ids(
                 layer_id, DepType.INCOMING):
             incoming_module = self._dep_manager.id_2_layer[incoming_id]
-            incoming_module.prune_incoming_neurons(neuron_indices)
 
-        # TODO(rotaru): Deal with through_flatten case.
+            if through_flatten:
+                incoming_neurons_per_outgoing_neuron = \
+                    incoming_module.in_features // module.neuron_count
+                incoming_prune_indices = []
+                for index in neuron_indices:
+                    incoming_prune_indices.extend(list(range(
+                        incoming_neurons_per_outgoing_neuron * index,
+                        incoming_neurons_per_outgoing_neuron * (index + 1))))
+                incoming_module.prune_incoming_neurons(incoming_prune_indices)
+            else:
+                incoming_module.prune_incoming_neurons(neuron_indices)
+
+        module.prune(neuron_indices)
 
         for hook_fn in self._architecture_change_hook_fns:
             hook_fn(self)
@@ -274,24 +302,42 @@ class NetworkWithOps(nn.Module):
                 f"[NetworkWithOps.add_neurons] No module with id {layer_id}")
 
         module = self._dep_manager.id_2_layer[layer_id]
-        module.add_neurons(
-                neuron_count, skip_initialization=skip_initialization)
+        through_flatten = False
+        if hasattr(self, "flatten_conv_id"):
+            through_flatten = (self.flatten_conv_id == layer_id)
 
         # If the dependent layer is of type "SAME", say after a conv we have
         # batch_norm, then we have to update the layer after the batch_norm too
         for same_dep_id in self._dep_manager.get_dependent_ids(
                 layer_id, DepType.SAME):
-            self.add_neurons(same_dep_id, neuron_count, skip_initialization)
+            self.add_neurons(
+                same_dep_id, neuron_count, skip_initialization,
+                through_flatten=through_flatten)
 
         # If the next layer is of type "INCOMING", say after a conv we have 
         # either a conv or a linear, then we add to incoming neurons.
+    
         for incoming_id in self._dep_manager.get_dependent_ids(
                 layer_id, DepType.INCOMING):
             incoming_module = self._dep_manager.id_2_layer[incoming_id]
-            incoming_module.add_incoming_neurons(
-                neuron_count, skip_initialization)
 
-        # TODO(rotaru): Deal with through_flatten case.
+            incoming_skip_initialization = True
+            if incoming_id == self.layers[-1].get_module_id():
+                incoming_skip_initialization = False
+
+            if through_flatten:
+                incoming_neurons_per_outgoing_neuron = \
+                    incoming_module.incoming_neuron_count // module.neuron_count
+                incoming_neuron_count = \
+                    neuron_count * incoming_neurons_per_outgoing_neuron
+                incoming_module.add_incoming_neurons(
+                    incoming_neuron_count, incoming_skip_initialization)
+            else:
+                incoming_module.add_incoming_neurons(
+                    neuron_count, incoming_skip_initialization)
+
+        module.add_neurons(
+                neuron_count, skip_initialization=skip_initialization)
 
         for hook_fn in self._architecture_change_hook_fns:
             hook_fn(self)
@@ -313,18 +359,32 @@ class NetworkWithOps(nn.Module):
         module = self._dep_manager.id_2_layer[layer_id]
         module.reorder(indices)
 
+        through_flatten = False
+        if hasattr(self, "flatten_conv_id"):
+            through_flatten = (self.flatten_conv_id == layer_id)
+
         # If the dependent layer is of type "SAME", say after a conv we have
         # batch_norm, then we have to update the layer after the batch_norm too
         for same_dep_id in self._dep_manager.get_dependent_ids(
                 layer_id, DepType.SAME):
-            self.reorder(same_dep_id, indices)
+            self.reorder(same_dep_id, indices, through_flatten=through_flatten)
 
         # If the next layer is of type "INCOMING", say after a conv we have 
         # either a conv or a linear, then we add to incoming neurons.
         for incoming_id in self._dep_manager.get_dependent_ids(
                 layer_id, DepType.INCOMING):
             incoming_module = self._dep_manager.id_2_layer[incoming_id]
-            incoming_module.reorder_incoming_neurons(indices)
+            if through_flatten:
+                incoming_neurons_per_outgoing_neuron = \
+                    incoming_module.in_features // module.neuron_count
+                incoming_reorder_indices = []
+                for index in indices:
+                    incoming_reorder_indices.extend(
+                        list(range(incoming_neurons_per_outgoing_neuron * index,
+                                   incoming_neurons_per_outgoing_neuron * (index + 1))))
+                incoming_module.reorder_incoming_neurons(incoming_reorder_indices)
+            else:
+                incoming_module.reorder_incoming_neurons(indices)
 
         # TODO(rotaru): Deal with through_flatten case.
 
@@ -353,18 +413,6 @@ class NetworkWithOps(nn.Module):
         indices = [idx_and_frq[0] for idx_and_frq in ids_and_rates]
 
         self.reorder(layer_id=layer_id, indices=indices)
-
-    def freeze_layers_up_to_idx(self, last_frozen_layer_idx: int):
-        for layer_idx, layer in enumerate(self.layers):
-            if layer_idx <= last_frozen_layer_idx:
-                for param in layer.parameters():
-                    param.requires_grad = False
-
-    def unfreeze_layers_from_idx(self, first_unfrozen_layer_idx: int):
-        for layer_idx, layer in enumerate(self.layers):
-            if layer_idx >= first_unfrozen_layer_idx:
-                for param in layer.parameters():
-                    param.requires_grad = True
 
     def model_summary_str(self):
         repr = "Model|"

@@ -75,7 +75,7 @@ class Experiment:
                 self.reset_data_iterators)
             self.train_loader = th.utils.data.DataLoader(
                 self.train_tracked_dataset, batch_size=self.batch_size,
-                shuffle=train_shuffle)
+                shuffle=train_shuffle, num_workers=1)
         if self.get_train_data_loader is not None:
             self.train_loader, self.train_tracked_dataset = (
                 self.get_train_data_loader()
@@ -116,7 +116,7 @@ class Experiment:
 
     def __repr__(self):
         with self.lock:
-            return f"[exp] {id(self)} is_train: {self.is_training} " + \
+            return f"Experiment[{id(self)}, {self.name}] is_train: {self.is_training} " + \
                 f"steps: {self.training_steps_to_do}"
 
     def _update_optimizer(self, model):
@@ -183,7 +183,10 @@ class Experiment:
         graph_names = self.logger.get_graph_names()
         self.logger.add_annotations(
             graph_names, self.name, "checkpoint", self.model.get_age(),
-            self.chkpt_manager.get_latest_experiment())
+            {
+                "checkpoint_id": self.chkpt_manager.get_latest_experiment()
+            }
+        )
 
     def load(self, checkpoint_id: int):
         """Loads the given checkpoint with a given id.
@@ -203,7 +206,8 @@ class Experiment:
         if self.get_train_data_loader is None:
             self.train_loader = th.utils.data.DataLoader(
                 self.train_tracked_dataset,
-                batch_size=self.batch_size, shuffle=self.train_shuffle)
+                batch_size=self.batch_size, shuffle=self.train_shuffle,
+                num_workers=1)
             self.train_iterator = iter(self.train_loader)
             self.eval_loader = th.utils.data.DataLoader(
                 self.eval_tracked_dataset, batch_size=self.batch_size)
@@ -233,12 +237,18 @@ class Experiment:
         Args:
             batch_size (int): the new batch size
         """
-        self.batch_size = batch_size
-        self.reset_data_iterators()
+        with self.lock:
+            self.batch_size = batch_size
+            self.reset_data_iterators()
 
     def _pass_one_batch(self, loader_iterator):
         # From the dataset we get: item, index, target
-        input_in_id_label = next(loader_iterator)
+        try:
+            input_in_id_label = next(loader_iterator)
+        except Exception as e:
+            print("Exception in _pass_one_batch: ", e, self.occured_train_steps)
+            raise StopIteration
+
         input_in_id_label = [
             tensor.to(self.device) for tensor in input_in_id_label]
         data, in_id, label = input_in_id_label
@@ -255,8 +265,8 @@ class Experiment:
             self.occured_train_steps += 1
 
         self.model.train()
-        self.optimizer.zero_grad()
         self.model.set_tracking_mode(TrackingMode.TRAIN)
+        self.optimizer.zero_grad()
         model_age = self.model.get_age()
         try:
             input, output = self._pass_one_batch(self.train_iterator)
@@ -330,14 +340,14 @@ class Experiment:
             output, input.label_batch, reduction='none')
         test_loss = th.sum(losses_batch)
         pred = output.argmax(dim=1, keepdim=True)
-        
+
         model_age = self.model.get_age()
         self.eval_loader.dataset.update_batch_sample_stats(
                 model_age,
                 input.in_id_batch.detach().cpu().numpy(),
                 losses_batch.detach().cpu().numpy(),
                 pred.detach().cpu().numpy())
-        
+
         correct = pred.eq(input.label_batch.view_as(pred)).cpu().sum().item()
         return test_loss, correct
 
@@ -362,7 +372,7 @@ class Experiment:
 
         losses /= len(self.eval_loader.dataset)
         accuracy = 100. * correct / len(self.eval_loader.dataset)
-        
+
         print("eval full: ", losses, accuracy)
 
         if not skip_tensorboard:
@@ -409,7 +419,6 @@ class Experiment:
         """
         with self.lock:
             self.is_training = not self.is_training
-        print("[exp]toggle is_training")
 
     def set_training_steps_to_do(self, steps: int):
         """Set the number of training steps to be performed.
@@ -444,3 +453,7 @@ class Experiment:
         """"Get all the train samples are records."""
         with self.lock:
             return self.eval_loader.dataset.as_records()
+
+    def set_name(self, name: str):
+        with self.lock:
+            self.name = name

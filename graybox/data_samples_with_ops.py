@@ -35,7 +35,6 @@ class _StateDictKeys(str, Enum):
     def ALL(cls):
         return list(map(lambda c: c.value, cls))
 
-
 class DataSampleTrackingWrapper(Dataset):
     def __init__(self, wrapped_dataset: Dataset):
         self.wrapped_dataset = wrapped_dataset
@@ -46,6 +45,16 @@ class DataSampleTrackingWrapper(Dataset):
         }
         self.dataframe = None
         self._map_updates_hook_fns = []
+
+        for sample_id in range(len(self.wrapped_dataset)):
+            self.update_sample_stats(
+                sample_id,
+                {
+                    SampleStats.PREDICTION_AGE.value: -1,
+                    SampleStats.PREDICTED_CLASS.value: -1,
+                    SampleStats.PREDICTION_LOSS.value: -1,
+                }
+            )
 
     def __eq__(self, other: "DataSampleTrackingWrapper") -> bool:
         # Unsafely assume that the wrapped dataset are the same
@@ -99,6 +108,8 @@ class DataSampleTrackingWrapper(Dataset):
                              f"expected: {SampleStats.ALL()}")
 
     def _update_index_to_index(self):
+        # import pdb; pdb.set_trace()
+
         if self._map_updates_hook_fns:
             for map_update_hook_fn in self._map_updates_hook_fns:
                 map_update_hook_fn()
@@ -134,31 +145,37 @@ class DataSampleTrackingWrapper(Dataset):
 
     def get(self, sample_id: int, stat_name: str, raw: bool = False) -> int | float | bool:
         self._raise_if_invalid_stat_name(stat_name)
-        if stat_name == SampleStats.LABEL:
+        if sample_id in self.sample_statistics[stat_name]:
+            value = self.sample_statistics[stat_name][sample_id]
+        elif stat_name == SampleStats.LABEL:
+            value = self[sample_id][2]  # 0 -> data; 1 -> index; 2 -> label;
             if raw:
-                return self._getitem_raw(sample_id)[2]
-            return self[sample_id][2]  # 0 -> data; 1 -> index; 2 -> label;
-        if stat_name == SampleStats.SAMPLE_ID:
+                value = self._getitem_raw(sample_id)[2]
+            self.sample_statistics[stat_name][sample_id] = value
+
+        elif stat_name == SampleStats.SAMPLE_ID:
+            value = self[sample_id][1]  # 0 -> data; 1 -> index; 2 -> label;
             if raw:
-                return self._getitem_raw(sample_id)[1]
-            return self[sample_id][1]  # 0 -> data; 1 -> index; 2 -> label;
-        value = self.sample_statistics[stat_name][sample_id]
+                value = self._getitem_raw(sample_id)[1]
+            self.sample_statistics[stat_name][sample_id] = value
+
+        # value = self.sample_statistics[stat_name][sample_id]
         # Hacky fix, for some reason, we store arrays for this column
         if type(value) is np.ndarray:
             value = value[0]
         return value
 
     def get_prediction_age(self, sample_id: int) -> int:
-        return self.get(sample_id, SampleStats.PREDICTION_AGE)
+        return self.get(sample_id, SampleStats.PREDICTION_AGE, raw=True)
 
     def get_prediction_loss(self, sample_id: int) -> float:
-        return self.get(sample_id, SampleStats.PREDICTION_LOSS)
+        return self.get(sample_id, SampleStats.PREDICTION_LOSS, raw=True)
 
     def get_exposure_amount(self, sample_id: int) -> int:
-        return self.get(sample_id, SampleStats.EXPOSURE_AMOUNT)
+        return self.get(sample_id, SampleStats.EXPOSURE_AMOUNT, raw=True)
 
     def is_deny_listed(self, sample_id: int) -> bool:
-        return self.get(sample_id, SampleStats.DENY_LISTED)
+        return self.get(sample_id, SampleStats.DENY_LISTED, raw=True)
 
     def update_sample_stats(self,
                             sample_id: int,
@@ -177,6 +194,21 @@ class DataSampleTrackingWrapper(Dataset):
         if sample_id not in self.sample_statistics[SampleStats.DENY_LISTED]:
             self.set(sample_id, SampleStats.DENY_LISTED, False)
         self.set(sample_id=sample_id, stat_name=SampleStats.SAMPLE_ID, stat_value=sample_id)
+
+    def get_label_breakdown(self):
+        from collections import defaultdict
+        label_to_stats = defaultdict(lambda: [0, 0])
+        for sample_id in self.sample_statistics[SampleStats.PREDICTION_AGE]:
+            label = self.get(sample_id, SampleStats.LABEL, raw=True)
+            prdct = self.get(sample_id, SampleStats.PREDICTED_CLASS, raw=True)
+
+            label_to_stats[label][0] += int(prdct == label)
+            label_to_stats[label][1] += 1
+
+        label_to_acc = {}
+        for label, (correct, total) in label_to_stats.items():
+            label_to_acc[label] = correct / total if total > 0 else 0
+        return dict(label_to_acc)
 
     def update_batch_sample_stats(self,
                                   model_age: int,
@@ -205,16 +237,28 @@ class DataSampleTrackingWrapper(Dataset):
 
         return not self.sample_statistics[SampleStats.DENY_LISTED][sample_id]
 
-    def denylist_samples(self, denied_samples_ids: Set[int] | None):
+    def denylist_samples(self, denied_samples_ids: Set[int] | None, override: bool = False):
         self.dataframe = None
+        # for denied_samples_id in denied_samples_ids:
+        #     self.denied_sample_cnt += 1
+        #     self.sample_statistics[SampleStats.DENY_LISTED][denied_samples_id] = True
+        if not denied_samples_ids:
+            self.denied_sample_cnt = 0
+            for sample_id in range(len(self)):
+                self.sample_statistics[SampleStats.DENY_LISTED][sample_id] = False
+
+        self.denied_sample_cnt = 0
         for sample_id in range(len(self.wrapped_dataset)):
             if sample_id in denied_samples_ids:
                 self.denied_sample_cnt += 1
                 self.sample_statistics[SampleStats.DENY_LISTED][sample_id] = True
+                # print("denied sample ", sample_id, " is in deniued_samples: ")
             else:
                 self.sample_statistics[SampleStats.DENY_LISTED][sample_id] = False
+                # print("denied sample ", sample_id, " is NOT IN deniued_samples")
 
         self._update_index_to_index()
+        # print("denied samples ", denied_samples_ids, self.sample_statistics[SampleStats.DENY_LISTED])
 
     def allowlist_samples(self, allowlist_samples_ids: Set[int] | None):
         self.dataframe = None
@@ -234,13 +278,16 @@ class DataSampleTrackingWrapper(Dataset):
 
         self._update_index_to_index()
 
-    def _get_denied_sample_ids(self, predicate: SamplePredicateFn | None) -> Set[int]:
+    def _get_denied_sample_ids(
+        self,
+        predicate: SamplePredicateFn | None,
+        verbose: bool = False
+    ) -> Set[int]:
         denied_samples_ids = set()
         if predicate is None:
             return denied_samples_ids
 
         for sample_id in range(len(self.wrapped_dataset)):
-
             # These are hard-codes for classification tasks, so we treat them
             # differently.
             prediction_class, label = None, None
@@ -255,21 +302,29 @@ class DataSampleTrackingWrapper(Dataset):
                 exposure_amount = self.get_exposure_amount(sample_id)
 
                 prediction_class = self.get(
-                    sample_id, SampleStats.PREDICTED_CLASS)
-                label = self.get(sample_id, SampleStats.LABEL)
+                    sample_id, SampleStats.PREDICTED_CLASS, raw=True)
+                label = self.get(sample_id, SampleStats.LABEL, raw=True)
             except KeyError:
-                pass
+                continue
 
             if predicate(
                     sample_id, prediction_age, prediction_loss,
                     exposure_amount, deny_listed, prediction_class, label):
                 denied_samples_ids.add(sample_id)
+                if verbose:
+                    print(f"Denied sample {sample_id} "
+                          f"with prediction age {prediction_age}, "
+                          f"prediction loss {prediction_loss}, "
+                          f"exposure amount {exposure_amount}, "
+                          f"deny listed {deny_listed}, "
+                          f"prediction class {prediction_class}, "
+                          f"label {label} -> predicate == True")
         return denied_samples_ids
 
     def deny_samples_with_predicate(self, predicate: SamplePredicateFn):
         self.dataframe = None
         denied_samples_ids = self._get_denied_sample_ids(predicate)
-        print("denied samples with predicate ", denied_samples_ids)
+        print("denied samples with predicate ", len(denied_samples_ids))
         self.denylist_samples(denied_samples_ids)
 
     def deny_samples_and_sample_allowed_with_predicate(
@@ -313,11 +368,11 @@ class DataSampleTrackingWrapper(Dataset):
                     sorted(denied_samples_ids), target_allowed_samples_no)
                 self.allowlist_samples(override_allowed_sample_ids)
 
-    def apply_predicate_with_weights_for_positives_and_negatives(
+    def apply_weighted_predicate(
         self,
         predicate: SamplePredicateFn,
-        positives: float | None,
-        negatives: float | None,
+        weight: float | None,
+        accumulate: bool = True,
         verbose: bool = False
     ):
         """
@@ -325,44 +380,38 @@ class DataSampleTrackingWrapper(Dataset):
             positives and negatives are kept in the resulting set.
         """
 
-        if positives is None:
-            positives = 1.0
-        if negatives is None:
-            negatives = 1.0
+        if weight is None:
+            weight = 1.0
 
         self.dataframe = None
-        denied_samples_ids = self._get_denied_sample_ids(predicate)
-        allowed_sample_ids = set(range(len(self.wrapped_dataset)))
-        total_samples_numb = len(self.wrapped_dataset)
+        denied_samples_ids = self._get_denied_sample_ids(
+            predicate, verbose=False)
         denied_samples_cnt = len(denied_samples_ids)
-        allowed_samples_no = total_samples_numb - denied_samples_cnt
 
-        allowed_samples_no = int(allowed_samples_no * positives) \
-            if positives <= 1.0 else int(positives)
-        denied_samples_cnt = int(denied_samples_cnt * negatives) \
-            if negatives <= 1.0 else int(negatives)
+        denied_samples_cnt = int(denied_samples_cnt * weight) \
+            if weight <= 1.0 else int(weight)
 
         if verbose:
             print(f'DataSampleTrackingWrapper'
-                  f'apply_predicate_with_weights_for_positives_and_negatives '
-                  f'denied {denied_samples_cnt} samples '
-                  f'allowed {allowed_samples_no} samples.')
+                  f'apply_weighted_predicate '
+                  f'denied {denied_samples_cnt} samples.')
 
-        if denied_samples_cnt > 0:
+        override_denied_sample_ids = []
+        if denied_samples_cnt > len(denied_samples_ids):
+            override_denied_sample_ids = list(denied_samples_ids)
+        elif denied_samples_cnt > 0:
             override_denied_sample_ids = rnd.sample(
                 sorted(denied_samples_ids), denied_samples_cnt)
-        if allowed_samples_no > 0:
-            override_allowed_sample_ids = rnd.sample(
-                sorted(allowed_sample_ids), allowed_samples_no)
 
         if verbose:
             print(f'DataSampleTrackingWrapper'
-                  f'apply_predicate_with_weights_for_positives_and_negatives '
-                  f'denied ids {override_denied_sample_ids[:20]} '
-                  f'allowed ids {override_allowed_sample_ids[:20]}.')
+                  f'apply_weighted_predicate '
+                  f'denied ids {override_denied_sample_ids[:20]}')
 
-        self.denylist_samples(override_denied_sample_ids)
-        self.allowlist_samples(override_allowed_sample_ids)
+        self.denylist_samples(
+            override_denied_sample_ids, override=True)
+        
+        print("DataSampleTrackingWrapper.apply_weighted_predicate #len", len(self))
 
     def _get_stats_dataframe(self, limit: int = -1):
         data_frame = pd.DataFrame(
@@ -370,21 +419,24 @@ class DataSampleTrackingWrapper(Dataset):
         for stat_name in SampleStats.ALL():
             for idx, sample_id in enumerate(
                     self.sample_statistics[SampleStats.PREDICTION_AGE]):
-                if limit >= 0 and idx <= limit:
-                    stat_value = self.get(sample_id, stat_name)
-                    data_frame.loc[sample_id, stat_name] = stat_value
+                if limit >= 0 and idx >= limit:
+                    break
+                sample_id = int(sample_id)
+                stat_value = self.get(sample_id, stat_name, raw=True)
+                data_frame.loc[sample_id, stat_name] = stat_value
         return data_frame
 
     def as_records(self, limit: int = -1):
         rows = []
         denied = 0
+
         for idx, sample_id in enumerate(
                 self.sample_statistics[SampleStats.PREDICTION_AGE]):
             if limit >= 0 and idx >= limit:
                 break
             row = {}
             for stat_name in SampleStats.ALL():
-                row[stat_name] = self.get(sample_id, stat_name, raw=True)
+                row[stat_name] = self.get(sample_id, stat_name)
             rows.append(row)
             denied += int(row[SampleStats.DENY_LISTED])
         return rows

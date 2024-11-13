@@ -1,13 +1,23 @@
 import unittest
 import numpy as np
 
+from torchvision import datasets as ds
+from torchvision import transforms as T
+
 from graybox.data_samples_with_ops import DataSampleTrackingWrapper
 from graybox.data_samples_with_ops import SampleStats
 
 
 class DummyDataset:
     def __init__(self):
-        self.elems = [(2, 2), (3, 3), (5, 5),  (7, 7), (90, 90), (20, 20)]
+        self.elems = [
+            (2, 2),
+            (3, 3), 
+            (5, 5), 
+            (7, 7),
+            (90, 90),
+            (20, 20),
+        ]
 
     def __len__(self):
         return len(self.elems)
@@ -40,7 +50,6 @@ class DataSampleTrackingWrapperTest(unittest.TestCase):
             self.wrapped_dataset[4]
 
     def test_denylist_and_allowlist(self):
-        # import pdb; pdb.set_trace()
         self.wrapped_dataset.denylist_samples({4, 5})
         self.assertEqual(len(self.wrapped_dataset), 4)
         self.assertEqual(self.wrapped_dataset[0], (2, 0, 2))
@@ -149,6 +158,76 @@ class DataSampleTrackingWrapperTest(unittest.TestCase):
         self.assertEqual(
             self.wrapped_dataset.get(0, SampleStats.PREDICTED_CLASS), 5)
 
+
+def sample_predicate_fn1(
+        sample_id, pred_age, pred_loss, exposure, is_denied, pred,
+        label):
+    return pred_loss >= 0.25 and pred_loss <= 0.5
+
+def sample_predicate_fn2(
+        sample_id, pred_age, pred_loss, exposure, is_denied, pred,
+        label):
+    return pred_loss <= 0.4
+
+
+class DataSampleTrackingWrapperTestMnist(unittest.TestCase):
+    def setUp(self):
+
+        transform = T.Compose([T.ToTensor()])
+        mnist_train = ds.MNIST(
+            "../data", train=True, transform=transform, download=True)
+        self.wrapped_dataset = DataSampleTrackingWrapper(mnist_train)
+        self.losses = []
+
+        for i in range(len(mnist_train)):
+            data, id, label = self.wrapped_dataset._getitem_raw(i)
+            loss = id / 60000  # artificial loss
+            self.wrapped_dataset.update_batch_sample_stats(
+                model_age=0, ids_batch=[i],
+                losses_batch=[loss],
+                predct_batch=[label])
+            self.losses.append(loss)
+
+    def test_predicate(self):
+        self.wrapped_dataset.apply_weighted_predicate(
+            sample_predicate_fn1, weight=1.0,
+            accumulate=False, verbose=True)
+
+        self.assertEqual(len(self.wrapped_dataset), 44999)
+
+    def test_predicate_with_weight(self):
+        self.wrapped_dataset.apply_weighted_predicate(
+            sample_predicate_fn1, weight=0.5,
+            accumulate=False, verbose=True)
+
+        self.assertEqual(len(self.wrapped_dataset), 52500)
+
+    def test_predicate_with_weight_over_one(self):
+        self.wrapped_dataset.apply_weighted_predicate(
+            sample_predicate_fn1, weight=2000,
+            accumulate=False, verbose=True)
+
+        self.assertEqual(len(self.wrapped_dataset), 58000)
+
+    def test_predicate_with_weight_over_one_not_enough_samples(self):
+        self.wrapped_dataset.apply_weighted_predicate(
+            sample_predicate_fn1, weight=20000,
+            accumulate=False, verbose=True)
+
+        self.assertEqual(len(self.wrapped_dataset), 44999)
+    
+    def test_predicate_with_accumulation(self):
+        self.wrapped_dataset.apply_weighted_predicate(
+            sample_predicate_fn1, weight=20000,
+            accumulate=False, verbose=True)
+
+        self.assertEqual(len(self.wrapped_dataset), 44999)
+
+        self.wrapped_dataset.apply_weighted_predicate(
+            sample_predicate_fn2, weight=20000,
+            accumulate=True, verbose=True)
+
+        self.assertEqual(len(self.wrapped_dataset), 30000)
 
 if __name__ == '__main__':
     unittest.main()

@@ -4,3 +4,4 @@ graybox.egg-info/*
 graybox/__pycache__/*
 tests/__pycache__/*
 pkg_main.py
+data/*

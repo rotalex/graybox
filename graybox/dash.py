@@ -136,7 +136,6 @@ class Dash:
         checkpoint_line = self.lines_2_annot[
             self.lines_2_annot.metadata == checkpoint_id]
         line_name = checkpoint_line.iloc[0].line_name
-
         return line_name
 
     def remove_data_after_checkpoint(self, checkpoint_id: int):
@@ -148,5 +147,5 @@ class Dash:
             self.graph_n_lines["step"] < checkpoint_line.iloc[0].step]
         self.lines_2_annot = self.lines_2_annot[
             self.lines_2_annot["step"] < checkpoint_line.iloc[0].step]
-        
+
         self._dump()
