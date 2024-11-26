@@ -315,8 +315,9 @@ class LinearWithNeuronOps(nn.Linear, LayerWiseOperations):
         with th.no_grad():
             self.weight.data = nn.Parameter(
                 self.weight.data[idx_tnsr]).to(self.device)
-            self.bias.data = nn.Parameter(
-                self.bias.data[idx_tnsr]).to(self.device)
+            if self.bias is not None:
+                self.bias.data = nn.Parameter(
+                    self.bias.data[idx_tnsr]).to(self.device)
 
         for tracker in self.trackers():
             tracker.reorder(indices)
@@ -785,7 +786,8 @@ class Conv2dWithNeuronOps(nn.Conv2d, LayerWiseOperations):
         with th.no_grad():
             self.weight.data = nn.Parameter(th.cat((self.weight.data,
                                                     parameters)))
-            self.bias.data = nn.Parameter(th.cat((self.bias.data, biases)))
+            if self.bias is not None:
+                self.bias.data = nn.Parameter(th.cat((self.bias.data, biases)))
 
         self.out_channels += neuron_count
         self.neuron_count = self.out_channels
@@ -903,6 +905,7 @@ class BatchNorm2dWithNeuronOps(nn.BatchNorm2d, LayerWiseOperations):
                 self.weight.data = nn.Parameter(
                     th.index_select(self.weight.data, dim=0, index=idx_tnsr)).to(
                         self.device)
+            if self.bias is not None:
                 self.bias.data = nn.Parameter(
                     th.index_select(self.bias.data, dim=0, index=idx_tnsr)).to(
                         self.device)
@@ -968,7 +971,8 @@ class BatchNorm2dWithNeuronOps(nn.BatchNorm2d, LayerWiseOperations):
         with th.no_grad():
             self.weight.data = nn.Parameter(th.cat((self.weight.data,
                                                     parameters)))
-            self.bias.data = nn.Parameter(th.cat((self.bias.data, biases)))
+            if self.bias is not None:
+                self.bias.data = nn.Parameter(th.cat((self.bias.data, biases)))
 
             self.running_mean = th.cat((
                 self.running_mean,
